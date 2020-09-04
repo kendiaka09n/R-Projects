@@ -1,0 +1,184 @@
+# Carregar Pacotes -----------------------------------------------------------------
+
+
+library(tidyverse)
+library(magrittr)
+library(mosaicCalc)
+library(ineq)
+
+
+# carregar dados gerais dos municipios ------------------------------------
+#INDICAR DIRETÓRIO
+setwd("C:/Users/kendi/Desktop/R/Atividade1")
+
+dados_municipios_gerais <- read_csv2( 'dados_municipios_2010.csv',
+                                      locale = locale(encoding = 'latin1'))
+
+
+# dados covid dos municipios ----------------------------------------------
+
+
+path <- 'https://raw.githubusercontent.com/wcota/covid19br/master/cases-brazil-cities-time.csv'
+dados_municipios_covid <- read_csv(path)
+
+dados_municipios_covid %<>% 
+  filter( state != 'TOTAL',
+          date >= max(date)) %>% 
+  select(ibgeID, date, state, city, totalCases, deaths)
+
+
+# Analise exploratória ----------------------------------------------------
+
+
+dados_municipios_covid %>% head(10) 
+str(dados_municipios_covid)
+summary(dados_municipios_covid)
+
+dados_municipios_gerais %>% head(10) 
+str(dados_municipios_gerais)
+summary(dados_municipios_gerais)
+
+
+
+# 1 - Quantas cidades existem em cada dataframe? (dados_municipios_gerais e dados_municipios_covid)? --------
+
+#dados_municipios_gerais = 5565 municipios
+#dados_municipios_covid = 5568 municipios
+
+dados_municipios_gerais %>%  group_by(ibgeID) %>%  nrow() 
+dados_municipios_covid %>%  group_by(ibgeID) %>% nrow() 
+
+#ou
+
+dados_municipios_covid %>% select(ibgeID) %>% unique() %>% count()
+dados_municipios_gerais %>% select(ibgeID) %>% unique() %>% count()
+
+
+# 2 - Como realizar o join desses dataframes? (realizar o join!! Dica, usar a função left_join) --------
+
+library(dplyr)
+dados_municipio_combinado <- left_join(dados_municipios_gerais,dados_municipios_covid,by="ibgeID",na_matches = c( "na", "never"))
+
+#O Join deve ser realizado pelo Identificador único dos municípios. No caso utilizamos a coluna ibgeID. Uma vez que cada município recebe uma identificação única. Há a possibilidade que tenha mais de um município com o mesmo nome, só que em estados diferentes. 
+
+
+# 3 - Obtenha o sumário das colunas por UF (state), similar a figura abaixo (apresentar o código): --------
+#Ao realizar o agrupamento por estado, os valores das colunas deaths e totalCases foram somadas e os demais atributos tiveram a média calculada. Para aplicar a função de GINI para todos os estadoso do Dataframe, foi utilizado o Loop da função FOR, filtrando estado por estado. 
+
+dados_municipio_Gini <- dados_municipio_combinado %>% select (state,RDPC,ibgeID) %>% group_by(state) %>% spread(key=state, value=RDPC) #cria uma coluna para cada UF
+dados_municipio_Gini <-  dados_municipio_Gini[3:ncol(dados_municipio_Gini)-1] #tira as colunas que nao usamos (pq 3 e nÃ£o 2 Ã© um misterio da vida)
+
+
+##  rm(output)     ##pra limpar a matrix antes de rodar (pra poder ficar rodando varias vezes)
+output <- matrix(ncol=2, nrow=ncol(dados_municipio_Gini)) #cria a matrix com 2 colunas e 27 linhas (26 estados + DF)
+
+
+for(i in 1:ncol(dados_municipio_Gini)){ #for que irÃ¡ executar 27 vezes
+  
+  UF <- colnames(dados_municipio_Gini)[i] #atribui o nome da coluna que Ã© o UF
+  dados <- dados_municipio_Gini %>% select(UF) #filtra apenas a coluna do UF correspondente (AC,AL,AM.AP,BA...)
+  dados <- dados[!is.na(dados)]  #tira os NA
+  
+  
+  output[i,1] <- UF #popula a matrix na coluna 1 linha i com o UF
+  output[i,2] <- format(round(ineq(dados, type = "Gini" ),3), nsmall = 3) #popula a matrix na coluna 2 linha i com o GINI, arredondando e travando em 3 casas decimais
+  
+}
+
+output <- tibble(state = output[,1],GINI = output[,2]) #cria uma tibble com base na matrix output e altera o nome das colunas para "casar" com o outro dataset que faremos o Left_Join
+
+###     rm(resultado)    #pra limpar a tibble antes de rodar (pra poder ficar rodando varias vezes)
+resultado <- left_join(entrega,output,by="state",na_matches = c( "na", "never"))
+
+
+entrega <- dados_municipio_combinado %>% group_by(state) %>% summarise(TotalCases = sum(totalCases),Deaths = sum(deaths),ESPVIDA = mean(ESPVIDA),E_ANOSESTUDO = mean(E_ANOSESTUDO),T_ANALF18M = mean(T_ANALF18M),renda = median(RDPC), IDHM = mean(IDHM))
+
+entrega %<>% drop_na(state) #tira um dos estados que estÃ¡ como NA
+
+resultado %>% view()
+
+
+#4 - Baseando-se nos resultados da tabela acima obtida, gere os seguintes gráfico:  --------
+#a) Gráfico de pontos de totalCases e ESPVIDA. --------------------------
+
+resultado%>%  ggplot(aes(x =ESPVIDA ,y = TotalCases, colour = state, size = IDHM))+
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle("Total de casos X Espectativa de vida")
+
+
+#b) Gráfico de pontos de totalCases e E_ANOSESTUDO. ---------------------
+resultado%>%  ggplot(aes(x =E_ANOSESTUDO ,y = TotalCases,  colour = state, size = IDHM)) + 
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Total de casos X Ano de Estudo")
+
+
+#c) Gráfico de pontos de totalCases e T_ANALF18M. -----------------------
+resultado%>%  ggplot(aes(x =T_ANALF18M ,y = TotalCases,  colour = state, size = IDHM))+ 
+  geom_point (stat="identity") +  
+  facet_wrap(~state) +
+  ggtitle(" Total de casos X Analfabetismo")
+
+
+#d) Gráfico de pontos de totalCases e renda. ----------------------------
+resultado%>%  ggplot(aes(x =RDPC ,y = TotalCases,  colour = state, size = IDHM))+
+  facet_wrap(~state) +
+  geom_point (stat="identity") + 
+  ggtitle(" Total de casos X Renda")
+
+
+#e) Gráfico de pontos de totalCases e IDHM. -----------------------------
+resultado%>%  ggplot(aes(x =IDHM ,y = TotalCases,  colour = state, size = IDHM))+
+  geom_point (stat="identity") +
+  facet_wrap(~state) +
+  ggtitle(" Total de casos X IDHM")
+
+#f) Gráfico de pontos de totalCases e GINI. -----------------------------
+
+resultado%>%  ggplot(aes(x =GINI ,y = TotalCases,  colour = state, size = IDHM))
++ geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Total de casos X GINI")
+
+#g) Gráfico de pontos de Deaths e ESPVIDA. -----------------------------
+resultado%>%  ggplot(aes(x =ESPVIDA ,y = Deaths,  colour = state, size = renda))+ 
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Mortes X Expectativa de vida")
+
+#h) Gráfico de pontos de Deaths e E_ANOSESTUDO. -----------------------------
+resultado%>%  ggplot(aes(x =E_ANOSESTUDO ,y = Deaths,  colour = state, size = renda))+ 
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Mortes X Anos de Estudo")
+
+#i) Gráfico de pontos de Deaths e T_ANALF18M. -----------------------------
+municipios_consolidados_mean%>%  ggplot(aes(x =T_ANALF18M ,y = Deaths,  colour = state, size = renda))+ 
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Mortes X Analfabetismo")
+
+#j) Gráfico de pontos de Deaths e renda.
+resultado%>%  ggplot(aes(x =renda ,y = Deaths,  colour = state, size = renda))+ 
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Mortes X Renda")
+
+#k) Gráfico de pontos de Deaths e IDHM.
+resultado%>%  ggplot(aes(x =IDHM ,y = Deaths,  colour = state, size = renda))+ 
+  geom_point (stat="identity") + 
+  facet_wrap(~state) +
+  ggtitle(" Mortes X IDHM")
+
+#l) Gráfico de pontos de Deaths e GINI. -----------------------------
+resultado%>%  ggplot(aes(x = GINI,y = Deaths,  colour = state, size = renda))+ 
+  geom_point (stat="identity") +  
+  facet_wrap(~state) +
+  ggtitle(" Mortes X GINI")
+
+#5 - Por meio das análises dos gráficos pode-se presumir algum resultado interessante? Apresente sua opinião. -----------------------------
+
+
+
+
